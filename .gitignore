@@ -1,0 +1,43 @@
+# Project-specific exclusions
+model_data/
+__pycache__/
+.venv/
+
+# macOS
+.DS_Store
+
+# Python
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environments
+venv/
+env/
+ENV/
+.env
+.env.local
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and experiment artifacts
+*.log
+lightning_logs/
+wandb/
+runs/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
