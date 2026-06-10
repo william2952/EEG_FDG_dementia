@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import gc
 import numpy as np
 import pandas as pd
 import torch
@@ -327,6 +328,13 @@ def run_cv(args):
 
         # Save predictions after each fold so a crash doesn't lose everything
         pd.DataFrame(fold_records).to_parquet(pred_path, index=False)
+
+        # Release datasets and model before next fold to avoid OOM
+        del train_ds, val_ds, test_ds, train_loader, val_loader, test_loader
+        del model, trainer, pred_trainer, all_preds, preds, targets, subjs
+        gc.collect()
+        if args.accelerator == "mps":
+            torch.mps.empty_cache()
 
     print("\nAll folds complete.")
     fold_r2_arr = np.array([r[0] for r in fold_r2s])
