@@ -147,33 +147,157 @@ def make_stratified_folds(subjects, pca_vals, n_folds, n_bins, rng):
 
 # ── CV loop ───────────────────────────────────────────────────────────────────
 
-def run_cv(args):
-    ckpt_dir = Path(args.output_dir) / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
+def _load_pca_and_subjects(args):
     pca_vals_raw = pd.read_parquet(args.pca_parquet)
     pca_vals = pd.DataFrame(
         np.stack(pca_vals_raw["vector"].to_numpy()),
         index=pca_vals_raw["subject"].astype(str),
     )
-
     all_subjects = np.array(sorted(
         set(pca_vals.index) & {p.stem for p in Path(args.data_dir).glob("*.parquet")}
     ))
+    return pca_vals, all_subjects
+
+
+def _build_folds(args, pca_vals, all_subjects):
+    rng = np.random.default_rng(args.seed)
+    return make_stratified_folds(all_subjects, pca_vals, args.n_folds, args.n_bins, rng)
+
+
+def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
+    """Train and evaluate a single fold. Saves to fold_{fold_idx}_preds_{suffix}.parquet."""
+    sfx = f"_{args.suffix}"
+    ckpt_dir = Path(args.output_dir) / f"checkpoints{sfx}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'='*60}")
+    print(f"Fold {fold_idx}  |  holdout n={len(folds[fold_idx])}")
+    print(f"{'='*60}")
+
+    test_subjects = folds[fold_idx]
+    other_holdout = np.concatenate([folds[i] for i in range(args.n_folds) if i != fold_idx])
+    non_test = np.concatenate([other_holdout, always_train])
+    print(f"  train+val pool: {len(non_test)} subjects")
+
+    rng_fold = np.random.default_rng(args.seed + fold_idx)
+    perm = rng_fold.permutation(len(non_test))
+    n_val = max(1, int(0.1 * len(non_test)))
+    val_subjects   = non_test[perm[:n_val]]
+    train_subjects = non_test[perm[n_val:]]
+
+    train_ds = EEGSegmentDataset(
+        args.data_dir, pca_vals,
+        n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
+        pca_offset=args.pca_offset,
+        subject_ids=train_subjects,
+    )
+    val_ds = EEGSegmentDataset(
+        args.data_dir, pca_vals,
+        n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
+        pca_offset=args.pca_offset,
+        subject_ids=val_subjects,
+        target_mean=train_ds.target_mean, target_std=train_ds.target_std,
+    )
+    test_ds = EEGSegmentDataset(
+        args.data_dir, pca_vals,
+        n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
+        pca_offset=args.pca_offset,
+        subject_ids=test_subjects,
+        target_mean=train_ds.target_mean, target_std=train_ds.target_std,
+    )
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader  = DataLoader(test_ds,  batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+
+    model = EEGRegressor(n_channels=19, n_outputs=args.n_pca)
+
+    callbacks = [
+        EarlyStopping(monitor="val_r2_mean", mode="max", patience=args.patience),
+        ModelCheckpoint(
+            dirpath=ckpt_dir,
+            monitor="val_r2_mean",
+            mode="max",
+            filename=f"fold{fold_idx}-top{{epoch:02d}}-{{val_r2_mean:.4f}}",
+            save_top_k=args.ensemble_k,
+        ),
+    ]
+    logger = TensorBoardLogger(
+        save_dir=str(Path(args.output_dir) / f"logs{sfx}"),
+        name=f"fold{fold_idx}",
+        version=0,
+    )
+
+    trainer = pl.Trainer(
+        max_epochs=args.max_epochs,
+        accelerator=args.accelerator,
+        devices=1,
+        log_every_n_steps=1,
+        callbacks=callbacks,
+        logger=logger,
+        enable_progress_bar=True,
+    )
+    trainer.fit(model, train_loader, val_loader)
+
+    ckpt_paths = sorted(callbacks[1].best_k_models.keys())
+    pred_trainer = pl.Trainer(accelerator=args.accelerator, devices=1,
+                              logger=False, enable_progress_bar=False)
+    all_preds = []
+    for ckpt_path in ckpt_paths:
+        m = EEGRegressor.load_from_checkpoint(ckpt_path)
+        b = pred_trainer.predict(m, test_loader)
+        all_preds.append(torch.cat([x[0] for x in b]).numpy())
+    print(f"  Ensemble of {len(ckpt_paths)} checkpoints")
+    preds   = np.mean(all_preds, axis=0)
+    targets = torch.cat([x[1] for x in b]).numpy()
+    subjs   = torch.cat([x[2] for x in b]).numpy()
+
+    fold_records = []
+    agg_p, agg_t = [], []
+    for s in np.unique(subjs):
+        mask = subjs == s
+        pred_denorm   = preds[mask].mean(0)   * train_ds.target_std + train_ds.target_mean
+        target_denorm = targets[mask].mean(0) * train_ds.target_std + train_ds.target_mean
+        fold_records.append({
+            "fold":     fold_idx,
+            "subject":  str(s),
+            "pred_pc1": float(pred_denorm[0]),
+            "true_pc1": float(target_denorm[0]),
+        })
+        agg_p.append(preds[mask].mean(0))
+        agg_t.append(targets[mask].mean(0))
+
+    fold_r2 = r2_score(np.stack(agg_t), np.stack(agg_p), multioutput="raw_values")
+    print(f"  Fold {fold_idx} holdout R²: {fold_r2}")
+
+    pred_path = Path(args.output_dir) / f"fold_{fold_idx}_preds{sfx}.parquet"
+    pd.DataFrame(fold_records).to_parquet(pred_path, index=False)
+    print(f"  Saved predictions → {pred_path}")
+    return fold_r2
+
+
+def run_cv(args):
+    sfx = f"_{args.suffix}"
+    ckpt_dir = Path(args.output_dir) / f"checkpoints{sfx}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    pca_vals, all_subjects = _load_pca_and_subjects(args)
     print(f"Total subjects: {len(all_subjects)}")
 
-    rng = np.random.default_rng(args.seed)
-    folds, always_train = make_stratified_folds(
-        all_subjects, pca_vals, args.n_folds, args.n_bins, rng
-    )
+    folds, always_train = _build_folds(args, pca_vals, all_subjects)
     holdout_sizes = [len(f) for f in folds]
     print(f"Stratified folds: {args.n_folds} folds × {args.n_bins} PC1 bins → "
           f"holdout sizes {holdout_sizes}  (always-train: {len(always_train)})")
     for i, f in enumerate(folds):
         print(f"  fold {i}: {len(f)} subjects")
 
+    # ── Single-fold mode (used by run_cv_parallel.py) ─────────────────────────
+    if args.fold_idx is not None:
+        train_one_fold(args, args.fold_idx, folds, always_train, pca_vals)
+        return
+
     # Load existing predictions if resuming
-    pred_path = Path(args.output_dir) / "predictions.parquet"
+    pred_path = Path(args.output_dir) / f"predictions{sfx}.parquet"
     if args.start_fold > 0 and pred_path.exists():
         fold_records = pd.read_parquet(pred_path).to_dict("records")
         print(f"Loaded {len(fold_records)} existing predictions from {pred_path}")
@@ -194,13 +318,14 @@ def run_cv(args):
         train_subjects = non_test[perm[n_val:]]
 
         train_ids = sorted(set(pca_vals.index) & {str(s) for s in train_subjects})
-        raw = np.stack([pca_vals.loc[s].to_numpy(dtype=np.float32)[:args.n_pca] for s in train_ids])
+        raw = np.stack([pca_vals.loc[s].to_numpy(dtype=np.float32)[args.pca_offset:args.pca_offset + args.n_pca] for s in train_ids])
         target_mean = raw.mean(0).astype(np.float32)
         target_std  = (raw.std(0) + 1e-8).astype(np.float32)
 
         test_ds = EEGSegmentDataset(
             args.data_dir, pca_vals,
             n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
+            pca_offset=args.pca_offset,
             subject_ids=test_subjects, target_mean=target_mean, target_std=target_std,
         )
         test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
@@ -227,111 +352,16 @@ def run_cv(args):
         fold_r2s.append(fold_r2)
         print(f"Recovered fold {fold_idx} holdout R² (ensemble {len(ckpt_paths)}): {fold_r2}")
 
-    # Train remaining folds
+    # Train remaining folds sequentially
     for fold_idx in range(args.start_fold, args.n_folds):
-        print(f"\n{'='*60}")
-        print(f"Fold {fold_idx}  |  holdout n={len(folds[fold_idx])}")
-        print(f"{'='*60}")
-
-        test_subjects = folds[fold_idx]
-        other_holdout = np.concatenate([folds[i] for i in range(args.n_folds) if i != fold_idx])
-        non_test = np.concatenate([other_holdout, always_train])
-        print(f"  train+val pool: {len(non_test)} subjects")
-
-        rng_fold = np.random.default_rng(args.seed + fold_idx)
-        perm = rng_fold.permutation(len(non_test))
-        n_val = max(1, int(0.1 * len(non_test)))
-        val_subjects   = non_test[perm[:n_val]]
-        train_subjects = non_test[perm[n_val:]]
-
-        train_ds = EEGSegmentDataset(
-            args.data_dir, pca_vals,
-            n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
-            subject_ids=train_subjects,
-        )
-        val_ds = EEGSegmentDataset(
-            args.data_dir, pca_vals,
-            n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
-            subject_ids=val_subjects,
-            target_mean=train_ds.target_mean, target_std=train_ds.target_std,
-        )
-        test_ds = EEGSegmentDataset(
-            args.data_dir, pca_vals,
-            n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
-            subject_ids=test_subjects,
-            target_mean=train_ds.target_mean, target_std=train_ds.target_std,
-        )
-
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers)
-        val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-        test_loader  = DataLoader(test_ds,  batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-
-        model = EEGRegressor(n_channels=19, n_outputs=args.n_pca)
-
-        callbacks = [
-            EarlyStopping(monitor="val_r2_mean", mode="max", patience=args.patience),
-            ModelCheckpoint(
-                dirpath=ckpt_dir,
-                monitor="val_r2_mean",
-                mode="max",
-                filename=f"fold{fold_idx}-top{{epoch:02d}}-{{val_r2_mean:.4f}}",
-                save_top_k=args.ensemble_k,
-            ),
-        ]
-        logger = TensorBoardLogger(
-            save_dir=str(Path(args.output_dir) / "logs"),
-            name=f"fold{fold_idx}",
-            version=0,
-        )
-
-        trainer = pl.Trainer(
-            max_epochs=args.max_epochs,
-            accelerator=args.accelerator,
-            devices=1,
-            log_every_n_steps=1,
-            callbacks=callbacks,
-            logger=logger,
-            enable_progress_bar=True,
-        )
-        trainer.fit(model, train_loader, val_loader)
-
-        ckpt_paths = sorted(callbacks[1].best_k_models.keys())
-        pred_trainer = pl.Trainer(accelerator=args.accelerator, devices=1,
-                                  logger=False, enable_progress_bar=False)
-        all_preds = []
-        for ckpt_path in ckpt_paths:
-            m = EEGRegressor.load_from_checkpoint(ckpt_path)
-            b = pred_trainer.predict(m, test_loader)
-            all_preds.append(torch.cat([x[0] for x in b]).numpy())
-        print(f"  Ensemble of {len(ckpt_paths)} checkpoints")
-        preds   = np.mean(all_preds, axis=0)
-        targets = torch.cat([x[1] for x in b]).numpy()
-        subjs   = torch.cat([x[2] for x in b]).numpy()
-
-        agg_p, agg_t = [], []
-        for s in np.unique(subjs):
-            m = subjs == s
-            pred_denorm   = preds[m].mean(0)   * train_ds.target_std + train_ds.target_mean
-            target_denorm = targets[m].mean(0) * train_ds.target_std + train_ds.target_mean
-            fold_records.append({
-                "fold":     fold_idx,
-                "subject":  str(s),
-                "pred_pc1": float(pred_denorm[0]),
-                "true_pc1": float(target_denorm[0]),
-            })
-            agg_p.append(preds[m].mean(0))
-            agg_t.append(targets[m].mean(0))
-
-        fold_r2 = r2_score(np.stack(agg_t), np.stack(agg_p), multioutput="raw_values")
+        fold_r2 = train_one_fold(args, fold_idx, folds, always_train, pca_vals)
         fold_r2s.append(fold_r2)
-        print(f"  Fold {fold_idx} holdout R²: {fold_r2}")
 
-        # Save predictions after each fold so a crash doesn't lose everything
+        # Merge this fold's per-fold file into the combined predictions.parquet
+        fold_pred_path = Path(args.output_dir) / f"fold_{fold_idx}_preds{sfx}.parquet"
+        fold_records.extend(pd.read_parquet(fold_pred_path).to_dict("records"))
         pd.DataFrame(fold_records).to_parquet(pred_path, index=False)
 
-        # Release datasets and model before next fold to avoid OOM
-        del train_ds, val_ds, test_ds, train_loader, val_loader, test_loader
-        del model, trainer, pred_trainer, all_preds, preds, targets, subjs
         gc.collect()
         if args.accelerator == "mps":
             torch.mps.empty_cache()
@@ -351,6 +381,8 @@ def main():
     parser.add_argument("--n-bins",      type=int, default=20,
                         help="PC1 quantile bins; 1 subject per bin is sampled into each holdout set.")
     parser.add_argument("--n-pca",       type=int, default=1)
+    parser.add_argument("--pca-offset",  type=int, default=0,
+                        help="Index of the first PCA component to use as target (0=PC1, 1=PC2, ...).")
     parser.add_argument("--n-seg",       type=int, default=1)
     parser.add_argument("--n-samples",   type=int, default=100)
     parser.add_argument("--seed",        type=int, default=42)
@@ -362,7 +394,12 @@ def main():
     parser.add_argument("--ensemble-k",  type=int, default=3,
                         help="Number of top-k checkpoints to save and average at holdout time.")
     parser.add_argument("--start-fold",  type=int, default=0,
-                        help="Resume from this fold (0-indexed). Loads predictions.parquet for prior folds.")
+                        help="Resume from this fold (0-indexed). Loads predictions_{suffix}.parquet for prior folds.")
+    parser.add_argument("--fold-idx",    type=int, default=None,
+                        help="Run exactly this one fold and exit. Used by run_cv_parallel.py.")
+    parser.add_argument("--suffix",      type=str, default="1",
+                        help="Output name suffix. Model 1 (PC1) → '1', model 2 (PC2) → '2', etc. "
+                             "Controls names of checkpoints_N, logs_N, predictions_N.parquet.")
     args = parser.parse_args()
     run_cv(args)
 

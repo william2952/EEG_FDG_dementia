@@ -7,7 +7,8 @@ from torch.utils.data import Dataset
 
 class EEGSegmentDataset(Dataset):
     def __init__(self, parquet_dir, pca_targets, n_pca_components, n_segments,
-                 n_samples, subject_ids, target_mean=None, target_std=None):
+                 n_samples, subject_ids, target_mean=None, target_std=None,
+                 pca_offset=0):
         self.n_segments = n_segments
         self.n_samples = n_samples
         paths = {p.stem: p for p in Path(parquet_dir).glob("*.parquet")}
@@ -15,7 +16,7 @@ class EEGSegmentDataset(Dataset):
         self.subjects = ids
         self.subj_to_idx = {s: i for i, s in enumerate(ids)}
 
-        raw = np.stack([pca_targets.loc[s].to_numpy(dtype=np.float32)[:n_pca_components]
+        raw = np.stack([pca_targets.loc[s].to_numpy(dtype=np.float32)[pca_offset:pca_offset + n_pca_components]
                         for s in ids])
         if target_mean is None:
             target_mean = raw.mean(0).astype(np.float32)
