@@ -48,7 +48,7 @@ def main():
     # Per-fold R²
     fold_r2s = []
     for fold_idx, grp in combined.groupby("fold"):
-        r2 = r2_score(grp["true_pc1"], grp["pred_pc1"])
+        r2 = max(0.0, r2_score(grp["true_pc1"], grp["pred_pc1"]))
         fold_r2s.append((fold_idx, r2))
         print(f"  fold {fold_idx:2d}  R² = {r2:.4f}  (n={len(grp)})")
 
