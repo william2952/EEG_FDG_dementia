@@ -18,15 +18,18 @@
 set -euo pipefail
 
 module load miniconda
+eval "$(conda shell.bash hook)"
 conda activate eeg
 
 # Persistent storage (never auto-purged) — code, input data, and FINAL outputs live here.
 # Confirmed via Globus: the persistent symlink on this account is "project_pi_am2359"
-# (NOT scratch, despite other YCRC docs suggesting otherwise for other accounts).
+# (NOT scratch, despite other YCRC docs suggesting otherwise for other accounts),
+# with a per-user subfolder underneath it.
 PROJECT_DIR="$HOME/project_pi_am2359/ww488/eeg_project"
 # 60-day scratch (auto-deleted after 60 days) — bulky/regenerable per-epoch checkpoints go here.
-# Confirmed: the purged symlink on this account is "scratch_pi_am2359".
-SCRATCH_DIR="$HOME/scratch_pi_am2359/eeg_scratch"
+# Confirmed: the purged symlink on this account is "scratch_pi_am2359", also with a
+# per-user subfolder underneath it (the top-level group dir isn't directly writable).
+SCRATCH_DIR="$HOME/scratch_pi_am2359/ww488/eeg_scratch"
 
 mkdir -p "$SCRATCH_DIR/checkpoints" logs
 

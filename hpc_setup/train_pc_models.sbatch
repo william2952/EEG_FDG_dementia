@@ -25,12 +25,13 @@
 set -euo pipefail
 
 module load miniconda
+eval "$(conda shell.bash hook)"
 conda activate eeg
 
 # Persistent storage (never auto-purged) — code, input data, and FINAL outputs live here.
 PROJECT_DIR="$HOME/project_pi_am2359/ww488/eeg_project"
 # 60-day scratch (auto-deleted after 60 days) — bulky/regenerable per-epoch checkpoints go here.
-SCRATCH_DIR="$HOME/scratch_pi_am2359/eeg_scratch"
+SCRATCH_DIR="$HOME/scratch_pi_am2359/ww488/eeg_scratch"
 
 mkdir -p "$SCRATCH_DIR/checkpoints" logs
 
