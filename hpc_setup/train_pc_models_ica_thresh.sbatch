@@ -1,0 +1,57 @@
+#!/bin/bash
+# ── Train PC2-PC10 CV models on Bouchet GPU nodes, ICA-thresholded dataset ──
+# Same pattern as train_pc_models.sbatch, pointed at post_ica_19_channels_var_thresh
+# instead of non_ica_19_channels_thresh. Output goes to cv_results_stratified_ica_thresh,
+# which already holds the existing ICA-thresh PC1 (predictions_1.parquet, checkpoints_1)
+# from the earlier local run - PC2-10 here are additive, not overwriting PC1.
+#
+# Submit with:
+#   sbatch train_pc_models_ica_thresh.sbatch
+
+#SBATCH --job-name=eeg_pc_cv_ica
+#SBATCH --account=pi_am2359
+#SBATCH --partition=gpu
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=1-00:00:00
+#SBATCH --array=2-10
+#SBATCH --output=logs/%x_%A_%a.out
+
+set -euo pipefail
+
+module load miniconda
+eval "$(conda shell.bash hook)"
+conda activate eeg
+
+# Persistent storage (never auto-purged) — code, input data, and FINAL outputs live here.
+PROJECT_DIR="$HOME/project_pi_am2359/ww488/eeg_project"
+# 60-day scratch (auto-deleted after 60 days) — bulky/regenerable per-epoch checkpoints go here.
+SCRATCH_DIR="$HOME/scratch_pi_am2359/ww488/eeg_scratch"
+
+mkdir -p "$SCRATCH_DIR/checkpoints" logs
+
+cd "$PROJECT_DIR"
+
+# SLURM_ARRAY_TASK_ID (2..10) IS the PC/model number here:
+#   model N -> pca-offset N-1 -> suffix N   (see run_all_models.py)
+MODEL_NUM="$SLURM_ARRAY_TASK_ID"
+
+python run_all_models.py \
+  --data-dir      "$PROJECT_DIR/model_data/post_ica_19_channels_var_thresh" \
+  --pca-parquet   "$PROJECT_DIR/model_data/matched_pca_vectors.parquet" \
+  --output-dir    "$SCRATCH_DIR/cv_results_stratified_ica_thresh" \
+  --models        "$MODEL_NUM" \
+  --n-folds       10 \
+  --ensemble-k    3 \
+  --accelerator   cuda \
+  --num-workers   8 \
+  --batch-size    64 \
+  --skip-done
+
+# Copy this model's small, durable outputs (predictions/coefficients) to
+# persistent project storage. Skip the bulky per-epoch checkpoints — those
+# stay in scratch and can be regenerated if needed.
+mkdir -p "$PROJECT_DIR/model_data/cv_results_stratified_ica_thresh"
+cp "$SCRATCH_DIR"/cv_results_stratified_ica_thresh/*_"${MODEL_NUM}".parquet \
+   "$PROJECT_DIR/model_data/cv_results_stratified_ica_thresh/" 2>/dev/null || true
