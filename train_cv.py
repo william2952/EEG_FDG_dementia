@@ -190,6 +190,7 @@ def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
         n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
         pca_offset=args.pca_offset,
         subject_ids=train_subjects,
+        mask_channels=args.mask_channels,
     )
     val_ds = EEGSegmentDataset(
         args.data_dir, pca_vals,
@@ -197,6 +198,7 @@ def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
         pca_offset=args.pca_offset,
         subject_ids=val_subjects,
         target_mean=train_ds.target_mean, target_std=train_ds.target_std,
+        mask_channels=args.mask_channels,
     )
     test_ds = EEGSegmentDataset(
         args.data_dir, pca_vals,
@@ -204,6 +206,7 @@ def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
         pca_offset=args.pca_offset,
         subject_ids=test_subjects,
         target_mean=train_ds.target_mean, target_std=train_ds.target_std,
+        mask_channels=args.mask_channels,
     )
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers)
@@ -327,6 +330,7 @@ def run_cv(args):
             n_pca_components=args.n_pca, n_segments=args.n_seg, n_samples=args.n_samples,
             pca_offset=args.pca_offset,
             subject_ids=test_subjects, target_mean=target_mean, target_std=target_std,
+            mask_channels=args.mask_channels,
         )
         test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
@@ -400,7 +404,12 @@ def main():
     parser.add_argument("--suffix",      type=str, default="1",
                         help="Output name suffix. Model 1 (PC1) → '1', model 2 (PC2) → '2', etc. "
                              "Controls names of checkpoints_N, logs_N, predictions_N.parquet.")
+    parser.add_argument("--mask-channels", type=str, default=None,
+                        help="Comma-separated channel names to zero out (ablate) in every "
+                             "window, e.g. 'C3,P3,F3,Cz'. Applied identically to train/val/holdout.")
     args = parser.parse_args()
+    args.mask_channels = ([c.strip() for c in args.mask_channels.split(",")]
+                          if args.mask_channels else None)
     run_cv(args)
 
 

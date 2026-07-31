@@ -65,6 +65,8 @@ def main():
     parser.add_argument("--ensemble-k",  type=int, default=3)
     parser.add_argument("--suffix",      type=str, default="1",
                         help="Output suffix passed to train_cv.py (e.g. '2' for PC2 model).")
+    parser.add_argument("--mask-channels", type=str, default=None,
+                        help="Comma-separated channel names to ablate, forwarded to train_cv.py.")
 
     # ── Launcher-only args ────────────────────────────────────────────────────
     parser.add_argument("--max-workers", type=int, default=1,
@@ -101,6 +103,8 @@ def main():
         "--ensemble-k",  str(args.ensemble_k),
         "--suffix",      args.suffix,
     ]
+    if args.mask_channels:
+        forward += ["--mask-channels", args.mask_channels]
 
     fold_indices = args.folds if args.folds is not None else list(range(args.n_folds))
 

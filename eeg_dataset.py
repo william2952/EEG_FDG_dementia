@@ -8,7 +8,12 @@ from torch.utils.data import Dataset
 class EEGSegmentDataset(Dataset):
     def __init__(self, parquet_dir, pca_targets, n_pca_components, n_segments,
                  n_samples, subject_ids, target_mean=None, target_std=None,
-                 pca_offset=0):
+                 pca_offset=0, mask_channels=None):
+        """
+        mask_channels: optional list of channel-name strings (e.g. ["C3","P3","F3","Cz"])
+                       to zero out in every window, applied uniformly to every subject
+                       and every split (train/val/holdout) that uses this dataset.
+        """
         self.n_segments = n_segments
         self.n_samples = n_samples
         paths = {p.stem: p for p in Path(parquet_dir).glob("*.parquet")}
@@ -27,16 +32,28 @@ class EEGSegmentDataset(Dataset):
 
         # Preload each subject once into memory as (n_seg, n_ch, 2560) float32
         self.cache = {}
+        mask_idx = None
         for i, s in enumerate(ids):
             df = (pd.read_parquet(paths[s],
                                   columns=["channel_name", "segment", "segment_index"])
                     .sort_values(["segment_index", "channel_name"]))
             n_seg = df["segment_index"].nunique()
             n_ch = df["channel_name"].nunique()
+
+            if mask_channels and mask_idx is None:
+                # Row order after the sort above is alphabetical by channel_name
+                # within each segment_index block — derive mask indices once,
+                # from the first subject (channel set is fixed across subjects).
+                ch_names = sorted(df["channel_name"].unique())
+                mask_idx = [ch_names.index(c) for c in mask_channels]
+
             arr = np.stack([np.pad(np.asarray(a, dtype=np.float32)[:2560],
                                    (0, max(0, 2560 - len(a))), mode="reflect")
                             for a in df["segment"]])
-            self.cache[s] = arr.reshape(n_seg, n_ch, 2560)
+            arr = arr.reshape(n_seg, n_ch, 2560)
+            if mask_idx:
+                arr[:, mask_idx, :] = 0.0
+            self.cache[s] = arr
             if (i + 1) % 100 == 0 or i + 1 == len(ids):
                 print(f"  loaded {i+1}/{len(ids)}", flush=True)
 
