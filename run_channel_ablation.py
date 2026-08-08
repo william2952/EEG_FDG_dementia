@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Train 19 channel-ablation CV models (one per central channel), on PC1.
+Train 19 channel-ablation CV models (one per central channel), on a single PC
+(default PC1, override with --pc).
 
 For each of the 19 EEG channels, this ablates that channel plus its 3 nearest
 neighbours (by standard 10-20 montage position) — same neighbour map already
@@ -96,6 +97,9 @@ def main():
     parser.add_argument("--ensemble-k",  type=int, default=3)
     parser.add_argument("--max-workers", type=int, default=1,
                         help="Parallel folds within each channel. >1 requires --accelerator cpu.")
+    parser.add_argument("--pc", type=int, default=1,
+                        help="Which PC to run this ablation study on (1-indexed, e.g. 5 for PC5). "
+                             "Default PC1.")
 
     # Runner-only args
     parser.add_argument("--channels",    type=str, nargs="+", default=None,
@@ -126,7 +130,9 @@ def main():
 
     print(f"[channel-ablation] Will train channels: {pending}")
 
-    # PC1 only, fixed — this study is specifically about PC1 channel importance.
+    # Single PC, fixed per run — this study is about channel importance for one PC at a time.
+    pca_offset = args.pc - 1
+    print(f"[channel-ablation] Running on PC{args.pc} (--n-pca 1 --pca-offset {pca_offset})")
     shared = [
         "--data-dir",    args.data_dir,
         "--pca-parquet", args.pca_parquet,
@@ -134,7 +140,7 @@ def main():
         "--n-folds",     str(args.n_folds),
         "--n-bins",      str(args.n_bins),
         "--n-pca",       "1",
-        "--pca-offset",  "0",
+        "--pca-offset",  str(pca_offset),
         "--n-seg",       str(args.n_seg),
         "--n-samples",   str(args.n_samples),
         "--seed",        str(args.seed),
