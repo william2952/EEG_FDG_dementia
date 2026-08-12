@@ -67,6 +67,10 @@ def main():
                         help="Output suffix passed to train_cv.py (e.g. '2' for PC2 model).")
     parser.add_argument("--mask-channels", type=str, default=None,
                         help="Comma-separated channel names to ablate, forwarded to train_cv.py.")
+    parser.add_argument("--mask-band-lo", type=float, default=None,
+                        help="Low edge (Hz) of a frequency band to ablate, forwarded to train_cv.py.")
+    parser.add_argument("--mask-band-hi", type=float, default=None,
+                        help="High edge (Hz) of a frequency band to ablate, forwarded to train_cv.py.")
 
     # ── Launcher-only args ────────────────────────────────────────────────────
     parser.add_argument("--max-workers", type=int, default=1,
@@ -105,6 +109,8 @@ def main():
     ]
     if args.mask_channels:
         forward += ["--mask-channels", args.mask_channels]
+    if args.mask_band_lo is not None:
+        forward += ["--mask-band-lo", str(args.mask_band_lo), "--mask-band-hi", str(args.mask_band_hi)]
 
     fold_indices = args.folds if args.folds is not None else list(range(args.n_folds))
 
