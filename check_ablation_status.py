@@ -32,11 +32,15 @@ STUDIES = [
     ("channel_ablation_thresh_ica_results",      CHANNELS, "Channel ablation — ICA PC1"),
     ("channel_ablation_thresh_ica_pc5_results",  CHANNELS, "Channel ablation — ICA PC5"),
     ("channel_ablation_thresh_ica_pc2_results",  CHANNELS, "Channel ablation — ICA PC2"),
+    ("channel_ablation_thresh_ica_pc8_results",  CHANNELS, "Channel ablation — ICA PC8"),
+    ("channel_ablation_thresh_pc5_no_bands_results", CHANNELS, "Channel ablation — non-ICA PC5, all bands removed"),
     # ── Band ablation (5 bands) ──
     ("band_ablation_thresh_pc1_results",         BANDS,    "Band ablation — non-ICA PC1"),
+    ("band_ablation_thresh_pc2_results",         BANDS,    "Band ablation — non-ICA PC2"),
     ("band_ablation_thresh_pc5_results",         BANDS,    "Band ablation — non-ICA PC5"),
     ("band_ablation_thresh_pc8_results",         BANDS,    "Band ablation — non-ICA PC8"),
     ("band_ablation_thresh_ica_pc1_results",     BANDS,    "Band ablation — ICA PC1"),
+    ("band_ablation_thresh_ica_pc2_results",     BANDS,    "Band ablation — ICA PC2"),
     ("band_ablation_thresh_ica_pc5_results",     BANDS,    "Band ablation — ICA PC5"),
     ("band_ablation_thresh_ica_pc8_results",     BANDS,    "Band ablation — ICA PC8"),
 ]

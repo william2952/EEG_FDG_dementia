@@ -100,6 +100,12 @@ def main():
     parser.add_argument("--pc", type=int, default=1,
                         help="Which PC to run this ablation study on (1-indexed, e.g. 5 for PC5). "
                              "Default PC1.")
+    parser.add_argument("--mask-band-lo", type=float, default=None,
+                        help="Optional: also bandstop-filter [lo, hi] Hz out of every channel, "
+                             "on top of the per-channel neighbour mask (e.g. 0.5 45 to strip all "
+                             "5 standard EEG bands at once, since they're contiguous). Requires "
+                             "--mask-band-hi too.")
+    parser.add_argument("--mask-band-hi", type=float, default=None)
 
     # Runner-only args
     parser.add_argument("--channels",    type=str, nargs="+", default=None,
@@ -109,6 +115,9 @@ def main():
                         help="Skip channels where all fold_N_preds_{channel}.parquet already exist.")
 
     args = parser.parse_args()
+
+    if (args.mask_band_lo is None) != (args.mask_band_hi is None):
+        raise SystemExit("--mask-band-lo and --mask-band-hi must be given together.")
 
     for c in (args.channels or []):
         if c not in NEIGHBOUR_MAP:
@@ -153,6 +162,10 @@ def main():
         "--max-workers", str(args.max_workers),
         "--skip-done",
     ]
+    if args.mask_band_lo is not None:
+        shared += ["--mask-band-lo", str(args.mask_band_lo), "--mask-band-hi", str(args.mask_band_hi)]
+        print(f"[channel-ablation] ALSO bandstop-filtering [{args.mask_band_lo}, {args.mask_band_hi}] Hz "
+              f"out of every channel, on top of each channel's neighbour mask.")
 
     failed = []
     t_total = time.time()
