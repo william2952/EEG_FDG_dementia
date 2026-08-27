@@ -71,6 +71,10 @@ def main():
                         help="Low edge (Hz) of a frequency band to ablate, forwarded to train_cv.py.")
     parser.add_argument("--mask-band-hi", type=float, default=None,
                         help="High edge (Hz) of a frequency band to ablate, forwarded to train_cv.py.")
+    parser.add_argument("--keep-band-lo", type=float, default=None,
+                        help="Low edge (Hz) of a frequency band to isolate (bandpass), forwarded to train_cv.py.")
+    parser.add_argument("--keep-band-hi", type=float, default=None,
+                        help="High edge (Hz) of a frequency band to isolate (bandpass), forwarded to train_cv.py.")
 
     # ── Launcher-only args ────────────────────────────────────────────────────
     parser.add_argument("--max-workers", type=int, default=1,
@@ -111,6 +115,8 @@ def main():
         forward += ["--mask-channels", args.mask_channels]
     if args.mask_band_lo is not None:
         forward += ["--mask-band-lo", str(args.mask_band_lo), "--mask-band-hi", str(args.mask_band_hi)]
+    if args.keep_band_lo is not None:
+        forward += ["--keep-band-lo", str(args.keep_band_lo), "--keep-band-hi", str(args.keep_band_hi)]
 
     fold_indices = args.folds if args.folds is not None else list(range(args.n_folds))
 

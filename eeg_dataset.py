@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 class EEGSegmentDataset(Dataset):
     def __init__(self, parquet_dir, pca_targets, n_pca_components, n_segments,
                  n_samples, subject_ids, target_mean=None, target_std=None,
-                 pca_offset=0, mask_channels=None, mask_band=None, sfreq=256):
+                 pca_offset=0, mask_channels=None, mask_band=None, keep_band=None, sfreq=256):
         """
         mask_channels: optional list of channel-name strings (e.g. ["C3","P3","F3","Cz"])
                        to zero out in every window, applied uniformly to every subject
@@ -19,6 +19,11 @@ class EEGSegmentDataset(Dataset):
                        band from every channel, applied once per subject at cache-build time
                        (baked in before training, same philosophy as mask_channels — unlike
                        the notebook's post-hoc per-window bandstop_transform).
+        keep_band: optional (low_hz, high_hz) tuple. If given, a 4th-order Butterworth
+                       bandPASS filter isolates only that frequency band (opposite of
+                       mask_band) — e.g. (0.5, 4) to keep only delta and discard everything
+                       else. Mutually exclusive in practice with mask_band, though both are
+                       applied independently if both given.
         sfreq: sampling rate in Hz of the cached segments (default 256, matches SEG_LEN=2560
                        -> 10s windows used throughout this project).
         """
@@ -42,9 +47,13 @@ class EEGSegmentDataset(Dataset):
         self.cache = {}
         mask_idx = None
         band_sos = None
+        keep_sos = None
         if mask_band is not None:
             low, high = mask_band
             band_sos = butter(4, [low, high], btype="bandstop", fs=sfreq, output="sos")
+        if keep_band is not None:
+            low, high = keep_band
+            keep_sos = butter(4, [low, high], btype="bandpass", fs=sfreq, output="sos")
         for i, s in enumerate(ids):
             df = (pd.read_parquet(paths[s],
                                   columns=["channel_name", "segment", "segment_index"])
@@ -67,6 +76,8 @@ class EEGSegmentDataset(Dataset):
                 arr[:, mask_idx, :] = 0.0
             if band_sos is not None:
                 arr = sosfiltfilt(band_sos, arr, axis=-1).astype(np.float32)
+            if keep_sos is not None:
+                arr = sosfiltfilt(keep_sos, arr, axis=-1).astype(np.float32)
             self.cache[s] = arr
             if (i + 1) % 100 == 0 or i + 1 == len(ids):
                 print(f"  loaded {i+1}/{len(ids)}", flush=True)

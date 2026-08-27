@@ -192,6 +192,7 @@ def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
         subject_ids=train_subjects,
         mask_channels=args.mask_channels,
         mask_band=args.mask_band,
+        keep_band=args.keep_band,
     )
     val_ds = EEGSegmentDataset(
         args.data_dir, pca_vals,
@@ -201,6 +202,7 @@ def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
         target_mean=train_ds.target_mean, target_std=train_ds.target_std,
         mask_channels=args.mask_channels,
         mask_band=args.mask_band,
+        keep_band=args.keep_band,
     )
     test_ds = EEGSegmentDataset(
         args.data_dir, pca_vals,
@@ -210,6 +212,7 @@ def train_one_fold(args, fold_idx, folds, always_train, pca_vals):
         target_mean=train_ds.target_mean, target_std=train_ds.target_std,
         mask_channels=args.mask_channels,
         mask_band=args.mask_band,
+        keep_band=args.keep_band,
     )
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers)
@@ -335,6 +338,7 @@ def run_cv(args):
             subject_ids=test_subjects, target_mean=target_mean, target_std=target_std,
             mask_channels=args.mask_channels,
             mask_band=args.mask_band,
+            keep_band=args.keep_band,
         )
         test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
@@ -417,8 +421,15 @@ def main():
     parser.add_argument("--mask-band-hi", type=float, default=None,
                         help="High edge (Hz) of a frequency band to bandstop-filter out of "
                              "every channel, e.g. 4 for delta. Requires --mask-band-lo too.")
+    parser.add_argument("--keep-band-lo", type=float, default=None,
+                        help="Low edge (Hz) of a frequency band to bandPASS-filter to (isolate), "
+                             "discarding everything else, e.g. 0.5 for delta-only. "
+                             "Requires --keep-band-hi too.")
+    parser.add_argument("--keep-band-hi", type=float, default=None,
+                        help="High edge (Hz) of a frequency band to bandPASS-filter to (isolate), "
+                             "e.g. 4 for delta-only. Requires --keep-band-lo too.")
     parser.add_argument("--sfreq", type=float, default=256,
-                        help="Sampling rate (Hz) of the cached segments, used for --mask-band-*.")
+                        help="Sampling rate (Hz) of the cached segments, used for --mask-band-*/--keep-band-*.")
     args = parser.parse_args()
     args.mask_channels = ([c.strip() for c in args.mask_channels.split(",")]
                           if args.mask_channels else None)
@@ -426,6 +437,10 @@ def main():
         raise SystemExit("--mask-band-lo and --mask-band-hi must be given together.")
     args.mask_band = ((args.mask_band_lo, args.mask_band_hi)
                       if args.mask_band_lo is not None else None)
+    if (args.keep_band_lo is None) != (args.keep_band_hi is None):
+        raise SystemExit("--keep-band-lo and --keep-band-hi must be given together.")
+    args.keep_band = ((args.keep_band_lo, args.keep_band_hi)
+                      if args.keep_band_lo is not None else None)
     run_cv(args)
 
 
