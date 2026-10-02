@@ -42,3 +42,6 @@ checkpoints/
 *.ckpt
 *.pt
 *.pth
+
+Claude outputs/
+paper_revision/
